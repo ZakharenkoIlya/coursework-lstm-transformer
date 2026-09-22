@@ -1,105 +1,147 @@
+import logging
 import os
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-import tensorflow as tf
-from data_processing import prepare_dataset
-from lstm_model import train_lstm, evaluate_lstm
-from transformer_model import train_transformer, evaluate_transformer
-from visualization import generate_all_plots
+import warnings
 
-# Шлях до датасету
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+warnings.filterwarnings("ignore")
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
+
+import tensorflow as tf
+from data_processing import HORIZON, LOOKBACK, inverse_scale_target, prepare_dataset
+from dlinear_model import SeriesDecomp, evaluate_dlinear, train_dlinear
+from lstm_model import evaluate_lstm, train_lstm
+from transformer_model import evaluate_transformer, train_transformer
+from visualization import (
+    plot_error_by_horizon,
+    plot_metrics_and_time,
+    plot_predictions_combined,
+)
+
 DATA_PATH = "ETTh1.csv"
 
-# Шляхи де зберігаються навчені моделі
-LSTM_PATH        = "best_lstm.keras"
-TRANSFORMER_PATH = "best_transformer.keras"
+dataset_base_name = os.path.splitext(os.path.basename(DATA_PATH))[0].lower()
+EXPERIMENT_PREFIX = f"{dataset_base_name}_{LOOKBACK}_{HORIZON}"
 
+LSTM_PATH = f"best_lstm_{EXPERIMENT_PREFIX}.keras"
+TRANSFORMER_PATH = f"best_transformer_{EXPERIMENT_PREFIX}.keras"
+DLINEAR_PATH = f"best_dlinear_{EXPERIMENT_PREFIX}.keras"
 
-def load_or_train_lstm(X_train, y_train, X_val, y_val):
-    """
-    Завантажує збережену LSTM модель якщо вона існує.
-    Якщо ні — навчає і зберігає.
-    """
-    if os.path.exists(LSTM_PATH):
-        print(f"Знайдено збережену LSTM модель: {LSTM_PATH}")
-        print("Завантажуємо...")
-        model = tf.keras.models.load_model(LSTM_PATH)
-        print("Завантажено.")
-        return model, None
-    else:
-        print("Збереженої LSTM моделі не знайдено, починаємо навчання...")
-        return train_lstm(X_train, y_train, X_val, y_val, epochs=50, batch_size=128)
+DEFAULT_TIMES = (
+    [2469.4, 5249.2, 56.8]
+    if "weather" in dataset_base_name
+    else [422.9, 813.8, 27.1]
+)
 
+def load_or_train_lstm(X_train, y_train, X_val, y_val, filepath):
+  if os.path.exists(filepath):
+    print(f"Знайдено збережену LSTM модель: {filepath}")
+    model = tf.keras.models.load_model(filepath)
+    return model, None, 0.0
+  else:
+    print(f"Навчання нової LSTM моделі ({filepath})...")
+    model, history, train_time = train_lstm(
+        X_train, y_train, X_val, y_val, filepath=filepath, epochs=50, batch_size=128
+    )
+    return model, history, train_time
 
-def load_or_train_transformer(X_train, y_train, X_val, y_val):
-    """
-    Завантажує збережену Transformer модель якщо вона існує.
-    Якщо ні — навчає і зберігає.
-    """
-    if os.path.exists(TRANSFORMER_PATH):
-        print(f"Знайдено збережену Transformer модель: {TRANSFORMER_PATH}")
-        print("Завантажуємо...")
-        model = tf.keras.models.load_model(TRANSFORMER_PATH)
-        print("Завантажено.")
-        return model, None
-    else:
-        print("Збереженої Transformer моделі не знайдено, починаємо навчання...")
-        return train_transformer(X_train, y_train, X_val, y_val, epochs=50, batch_size=128)
+def load_or_train_transformer(X_train, y_train, X_val, y_val, filepath):
+  if os.path.exists(filepath):
+    print(f"Знайдено збережену Transformer модель: {filepath}")
+    model = tf.keras.models.load_model(filepath)
+    return model, None, 0.0
+  else:
+    print(f"Навчання нової Transformer моделі ({filepath})...")
+    model, history, train_time = train_transformer(
+        X_train, y_train, X_val, y_val, filepath=filepath, epochs=50, batch_size=128
+    )
+    return model, history, train_time
 
+def load_or_train_dlinear(X_train, y_train, X_val, y_val, filepath):
+  if os.path.exists(filepath):
+    print(f"Знайдено збережену DLinear модель: {filepath}")
+    model = tf.keras.models.load_model(filepath, custom_objects={"SeriesDecomp": SeriesDecomp})
+    return model, None, 0.0
+  else:
+    print(f"Навчання нової DLinear моделі ({filepath})...")
+    model, history, train_time = train_dlinear(
+        X_train, y_train, X_val, y_val, filepath=filepath, epochs=50, batch_size=128
+    )
+    return model, history, train_time
 
 def main():
-    # Крок 1: завантаження і підготовка даних
-    data = prepare_dataset(DATA_PATH)
+  print("=" * 65)
+  print(f"Запуск експерименту [{dataset_base_name.upper()}] (Lookback: {LOOKBACK}, Horizon: {HORIZON})")
+  print("=" * 65)
 
-    X_train = data["X_train"]
-    y_train = data["y_train"]
-    X_val   = data["X_val"]
-    y_val   = data["y_val"]
-    X_test  = data["X_test"]
-    y_test  = data["y_test"]
-    scaler  = data["scaler"]
+  data = prepare_dataset(DATA_PATH)
+  X_train, y_train = data["X_train"], data["y_train"]
+  X_val, y_val = data["X_val"], data["y_val"]
+  X_test, y_test = data["X_test"], data["y_test"]
+  scaler = data["scaler"]
+  target_col = data["target_col"]
+  target_idx = data["target_idx"]
 
-    # Крок 2: навчання або завантаження LSTM
-    print("\n" + "=" * 50)
-    print("LSTM")
-    print("=" * 50)
-    lstm_model, lstm_history = load_or_train_lstm(X_train, y_train, X_val, y_val)
+  unit = "°C" if ("degC" in target_col or "OT" in target_col) else ""
 
-    # Крок 3: навчання або завантаження Transformer
-    print("\n" + "=" * 50)
-    print("Transformer")
-    print("=" * 50)
-    transformer_model, transformer_history = load_or_train_transformer(X_train, y_train, X_val, y_val)
+  print("\n1. LSTM")
+  lstm_model, _, lstm_time = load_or_train_lstm(X_train, y_train, X_val, y_val, LSTM_PATH)
 
-    # Крок 4: оцінка обох моделей на тестових даних
-    print("\n" + "=" * 50)
-    print("Оцінка моделей на тестових даних")
-    print("=" * 50)
+  print("\n2. Transformer")
+  transformer_model, _, transformer_time = load_or_train_transformer(X_train, y_train, X_val, y_val, TRANSFORMER_PATH)
 
-    lstm_metrics, lstm_pred, true_values = evaluate_lstm(
-        lstm_model, X_test, y_test, scaler
-    )
+  print("\n3. DLinear")
+  dlinear_model, _, dlinear_time = load_or_train_dlinear(X_train, y_train, X_val, y_val, DLINEAR_PATH)
 
-    transformer_metrics, transformer_pred, _ = evaluate_transformer(
-        transformer_model, X_test, y_test, scaler
-    )
+  print("\nОцінювання моделей на тестовій вибірці...")
+  lstm_metrics, lstm_pred, true_values = evaluate_lstm(lstm_model, X_test, y_test, scaler, target_idx)
+  transformer_metrics, transformer_pred, _ = evaluate_transformer(transformer_model, X_test, y_test, scaler, target_idx)
+  dlinear_metrics, dlinear_pred = evaluate_dlinear(dlinear_model, X_test, y_test, scaler, target_idx)
 
-    # Крок 5: фінальне порівняння
-    print("\n" + "=" * 50)
-    print("Порівняння результатів")
-    print("=" * 50)
-    print(f"{'Метрика':<10} {'LSTM':>12} {'Transformer':>14}")
-    print("-" * 38)
-    print(f"{'MAE':<10} {lstm_metrics['mae']:>12.4f} {transformer_metrics['mae']:>14.4f}")
-    print(f"{'RMSE':<10} {lstm_metrics['rmse']:>12.4f} {transformer_metrics['rmse']:>14.4f}")
-    print(f"{'MAPE':<10} {lstm_metrics['mape']:>11.2f}% {transformer_metrics['mape']:>13.2f}%")
-    print("-" * 38)
+  print("\n" + "=" * 65)
+  print(f"Результати [{dataset_base_name.upper()}] (Target: {target_col}, Горизонт: {HORIZON})")
+  print("=" * 65)
+  print(f"{'Метрика':<20} {'LSTM':<15} {'Transformer':<15} {'DLinear'}")
+  print("-" * 65)
+  print(f"{f'MAE ({unit})':<20} {lstm_metrics['mae']:<15.4f} {transformer_metrics['mae']:<15.4f} {dlinear_metrics['mae']:.4f}")
+  print(f"{f'RMSE ({unit})':<20} {lstm_metrics['rmse']:<15.4f} {transformer_metrics['rmse']:<15.4f} {dlinear_metrics['rmse']:.4f}")
+  print(f"{'MAPE (%)':<20} {lstm_metrics['mape']:<14.2f}% {transformer_metrics['mape']:<14.2f}% {dlinear_metrics['mape']:.2f}%")
+  print(f"{'Час навч. (с)':<20} {lstm_time:<15.2f} {transformer_time:<15.2f} {dlinear_time:.2f}")
+  print("-" * 65)
 
-    better = "LSTM" if lstm_metrics["mae"] < transformer_metrics["mae"] else "Transformer"
-    print(f"Краща модель за MAE: {better}")
-# Крок 6: графіки
-    generate_all_plots(true_values, lstm_pred, transformer_pred, lstm_metrics, transformer_metrics)
+  times = {
+      "lstm": lstm_time,
+      "transformer": transformer_time,
+      "dlinear": dlinear_time,
+  }
 
+  lstm_pred_all = inverse_scale_target(lstm_model.predict(X_test, verbose=0), scaler, target_idx)
+  transf_pred_all = inverse_scale_target(transformer_model.predict(X_test, verbose=0), scaler, target_idx)
+  dlinear_pred_all = inverse_scale_target(dlinear_model.predict(X_test, verbose=0), scaler, target_idx)
+  y_test_orig = inverse_scale_target(y_test, scaler, target_idx)
+
+  pred_file = f"predictions_combined_{EXPERIMENT_PREFIX}.png"
+  error_file = f"error_by_horizon_{EXPERIMENT_PREFIX}.png"
+  metrics_file = f"metrics_and_time_{EXPERIMENT_PREFIX}.png"
+
+  print("\nГенерація адаптованих графіків...")
+
+  plot_predictions_combined(
+      true_values, lstm_pred, transformer_pred, dlinear_pred,
+      dataset_name=dataset_base_name.upper(), target_name=target_col, unit=unit, save_path=pred_file,
+  )
+
+  plot_error_by_horizon(
+      y_test_orig, lstm_pred_all, transf_pred_all, dlinear_pred_all,
+      dataset_name=dataset_base_name.upper(), unit=unit, save_path=error_file,
+  )
+
+  plot_metrics_and_time(
+      lstm_metrics, transformer_metrics, dlinear_metrics, times,
+      default_times=DEFAULT_TIMES, unit=unit, save_path=metrics_file,
+  )
+
+  print(f"Збережено файли:\n - {pred_file}\n - {error_file}\n - {metrics_file}")
 
 if __name__ == "__main__":
-    main()
+  main()

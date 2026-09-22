@@ -1,205 +1,109 @@
-import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
+import numpy as np
 
-
-# Налаштування загального стилю графіків
-plt.rcParams["figure.dpi"]       = 120
-plt.rcParams["font.size"]        = 11
-plt.rcParams["axes.grid"]        = True
-plt.rcParams["grid.alpha"]       = 0.3
-plt.rcParams["axes.spines.top"]  = False
+plt.rcParams["figure.dpi"] = 150
+plt.rcParams["font.size"] = 10
+plt.rcParams["axes.grid"] = True
+plt.rcParams["grid.alpha"] = 0.25
+plt.rcParams["axes.spines.top"] = False
 plt.rcParams["axes.spines.right"] = False
 
+COLORS = {
+    "Fact": "#2b2b2b",
+    "LSTM": "#e41a1c",
+    "Transformer": "#4daf4a",
+    "DLinear": "#377eb8",
+}
 
-def plot_predictions(true_values, lstm_pred, transformer_pred, n_points=300):
-    """
-    Графік факт vs прогноз для обох моделей на тестовому відрізку.
+def plot_predictions_combined(
+    true_values, lstm_pred, transformer_pred, dlinear_pred,
+    dataset_name="Dataset", target_name="Target", unit="°C",
+    n_points=200, save_path="predictions_combined.png"
+):
+  true = true_values[:n_points]
+  lstm = lstm_pred[:n_points]
+  transf = transformer_pred[:n_points]
+  dlinear = dlinear_pred[:n_points]
 
-    Показуємо тільки перші n_points точок щоб графік був читабельним,
-    бо 3366 точок злились би в суцільну масу.
+  fig, ax = plt.subplots(figsize=(12, 5))
 
-    Параметри:
-        true_values       - реальні значення OT
-        lstm_pred         - прогнози LSTM
-        transformer_pred  - прогнози Transformer
-        n_points          - скільки точок показувати
-    """
-    true   = true_values[:n_points]
-    lstm   = lstm_pred[:n_points]
-    transf = transformer_pred[:n_points]
+  ax.plot(true, label=f"Факт ({target_name})", color=COLORS["Fact"], linewidth=1.8, alpha=0.8)
+  ax.plot(lstm, label="LSTM", color=COLORS["LSTM"], linewidth=1.2, linestyle="--")
+  ax.plot(transf, label="Transformer", color=COLORS["Transformer"], linewidth=1.2, linestyle=":")
+  ax.plot(dlinear, label="DLinear (LTSF)", color=COLORS["DLinear"], linewidth=1.4, linestyle="-.")
 
-    fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
-    fig.suptitle("Прогнозування температури масла трансформатора (OT)", fontsize=14)
+  ax.set_title(f"Порівняння прогнозів моделей ({dataset_name}, target: {target_name})", fontsize=12)
+  ax.set_xlabel("Часові кроки")
+  ax.set_ylabel(f"Значення ({unit})" if unit else "Значення")
+  ax.legend(loc="upper right", frameon=True)
 
-    # Верхній графік - LSTM
-    axes[0].plot(true,  label="Факт",  color="#2c7bb6", linewidth=1.5)
-    axes[0].plot(lstm,  label="LSTM",  color="#d7191c", linewidth=1.2, linestyle="--")
-    axes[0].set_title("LSTM")
-    axes[0].set_ylabel("Температура (°C)")
-    axes[0].legend(loc="upper right")
+  y_min = min(true.min(), lstm.min(), transf.min(), dlinear.min())
+  y_max = max(true.max(), lstm.max(), transf.max(), dlinear.max())
+  margin = (y_max - y_min) * 0.08 if y_max != y_min else 1.0
+  ax.set_ylim(y_min - margin, y_max + margin)
 
-    # Нижній графік - Transformer
-    axes[1].plot(true,  label="Факт",        color="#2c7bb6", linewidth=1.5)
-    axes[1].plot(transf, label="Transformer", color="#1a9641", linewidth=1.2, linestyle="--")
-    axes[1].set_title("Transformer")
-    axes[1].set_ylabel("Температура (°C)")
-    axes[1].set_xlabel("Години (тестовий відрізок)")
-    axes[1].legend(loc="upper right")
+  plt.tight_layout()
+  plt.savefig(save_path, bbox_inches="tight")
+  plt.close()
 
-    plt.tight_layout()
-    plt.savefig("predictions.png", bbox_inches="tight")
-    plt.show()
-    print("Збережено: predictions.png")
+def plot_error_by_horizon(
+    y_test_orig, lstm_pred_all, transf_pred_all, dlinear_pred_all,
+    dataset_name="Dataset", unit="°C", save_path="error_by_horizon.png"
+):
+  horizon = y_test_orig.shape[1]
 
+  lstm_mae = np.mean(np.abs(lstm_pred_all - y_test_orig), axis=0)
+  transf_mae = np.mean(np.abs(transf_pred_all - y_test_orig), axis=0)
+  dlinear_mae = np.mean(np.abs(dlinear_pred_all - y_test_orig), axis=0)
 
-def plot_predictions_combined(true_values, lstm_pred, transformer_pred, n_points=300):
-    """
-    Альтернативний варіант - всі три лінії на одному графіку.
-    Зручно для прямого порівняння.
-    """
-    true   = true_values[:n_points]
-    lstm   = lstm_pred[:n_points]
-    transf = transformer_pred[:n_points]
+  steps = np.arange(1, horizon + 1)
 
-    fig, ax = plt.subplots(figsize=(14, 5))
+  fig, ax = plt.subplots(figsize=(10, 5))
 
-    ax.plot(true,   label="Факт",        color="#2c7bb6", linewidth=1.5)
-    ax.plot(lstm,   label="LSTM",        color="#d7191c", linewidth=1.2, linestyle="--")
-    ax.plot(transf, label="Transformer", color="#1a9641", linewidth=1.2, linestyle=":")
+  ax.plot(steps, lstm_mae, label="LSTM", color=COLORS["LSTM"], linewidth=2)
+  ax.plot(steps, transf_mae, label="Transformer", color=COLORS["Transformer"], linewidth=2)
+  ax.plot(steps, dlinear_mae, label="DLinear (LTSF)", color=COLORS["DLinear"], linewidth=2)
 
-    ax.set_title("Порівняння прогнозів LSTM та Transformer", fontsize=13)
-    ax.set_xlabel("Години (тестовий відрізок)")
-    ax.set_ylabel("Температура (°C)")
-    ax.legend(loc="upper right")
+  ax.set_title(f"Динаміка зростання похибки (MAE) від горизонту ({dataset_name})", fontsize=12)
+  ax.set_xlabel(f"Крок горизонту прогнозу (від 1 до {horizon})")
+  ax.set_ylabel(f"Середня абсолютна похибка MAE ({unit})" if unit else "Середня абсолютна похибка MAE")
+  ax.legend(loc="upper left", frameon=True)
 
-    plt.tight_layout()
-    plt.savefig("predictions_combined.png", bbox_inches="tight")
-    plt.show()
-    print("Збережено: predictions_combined.png")
+  plt.tight_layout()
+  plt.savefig(save_path, bbox_inches="tight")
+  plt.close()
 
+def plot_metrics_and_time(
+    lstm_m, transf_m, dlinear_m, times,
+    default_times=None, unit="°C", save_path="metrics_and_time.png"
+):
+  models = ["LSTM", "Transformer", "DLinear"]
+  mae_values = [lstm_m["mae"], transf_m["mae"], dlinear_m["mae"]]
+  time_values = [times["lstm"], times["transformer"], times["dlinear"]]
 
-def plot_error_distribution(true_values, lstm_pred, transformer_pred):
-    """
-    Гістограма розподілу похибок для кожної моделі.
-    Показує наскільки рівномірно модель помиляється -
-    ідеально розподіл має бути схожий на дзвін centered біля нуля.
-    """
-    lstm_errors   = lstm_pred - true_values
-    transf_errors = transformer_pred - true_values
+  if all(t == 0.0 for t in time_values) and default_times is not None:
+    time_values = default_times
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-    fig.suptitle("Розподіл похибок прогнозування", fontsize=13)
+  fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
-    axes[0].hist(lstm_errors, bins=60, color="#d7191c", alpha=0.7, edgecolor="white")
-    axes[0].axvline(0, color="black", linewidth=1.2, linestyle="--", label="Нуль")
-    axes[0].axvline(lstm_errors.mean(), color="#d7191c", linewidth=1.5,
-                    linestyle="-", label=f"Середня похибка: {lstm_errors.mean():.3f}")
-    axes[0].set_title("LSTM")
-    axes[0].set_xlabel("Похибка (°C)")
-    axes[0].set_ylabel("Кількість")
-    axes[0].legend()
+  bars1 = ax1.bar(models, mae_values, color=["#e63946", "#2a9d8f", "#457b9d"], width=0.4)
+  ax1.set_title("Похибка MAE (нижче = краще)")
+  ax1.set_ylabel(f"Значення ({unit})" if unit else "Значення")
+  ax1.set_ylim(0, max(mae_values) * 1.25)
 
-    axes[1].hist(transf_errors, bins=60, color="#1a9641", alpha=0.7, edgecolor="white")
-    axes[1].axvline(0, color="black", linewidth=1.2, linestyle="--", label="Нуль")
-    axes[1].axvline(transf_errors.mean(), color="#1a9641", linewidth=1.5,
-                    linestyle="-", label=f"Середня похибка: {transf_errors.mean():.3f}")
-    axes[1].set_title("Transformer")
-    axes[1].set_xlabel("Похибка (°C)")
-    axes[1].set_ylabel("Кількість")
-    axes[1].legend()
+  for bar in bars1:
+    yval = bar.get_height()
+    ax1.text(bar.get_x() + bar.get_width() / 2, yval + (max(mae_values) * 0.02), f"{yval:.3f}", ha="center", va="bottom", fontsize=9)
 
-    plt.tight_layout()
-    plt.savefig("error_distribution.png", bbox_inches="tight")
-    plt.show()
-    print("Збережено: error_distribution.png")
+  bars2 = ax2.bar(models, time_values, color=["#e63946", "#2a9d8f", "#457b9d"], width=0.4)
+  ax2.set_title("Час навчання (нижче = швидше)")
+  ax2.set_ylabel("Секунди (с)")
+  ax2.set_ylim(0, max(time_values) * 1.25)
 
+  for bar in bars2:
+    yval = bar.get_height()
+    ax2.text(bar.get_x() + bar.get_width() / 2, yval + (max(time_values) * 0.02), f"{yval:.1f}s", ha="center", va="bottom", fontsize=9)
 
-def plot_metrics_comparison(lstm_metrics, transformer_metrics):
-    """
-    Стовпчиковий графік порівняння метрик MAE і RMSE.
-    MAPE не включаємо бо вона в інших одиницях (відсотки)
-    і зіпсує масштаб графіку.
-    """
-    metrics = ["MAE", "RMSE"]
-    lstm_values   = [lstm_metrics["mae"],        lstm_metrics["rmse"]]
-    transf_values = [transformer_metrics["mae"], transformer_metrics["rmse"]]
-
-    x = np.arange(len(metrics))
-    width = 0.35
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-
-    bars_lstm   = ax.bar(x - width/2, lstm_values,   width, label="LSTM",
-                         color="#d7191c", alpha=0.85)
-    bars_transf = ax.bar(x + width/2, transf_values, width, label="Transformer",
-                         color="#1a9641", alpha=0.85)
-
-    # Підписи значень над стовпцями
-    for bar in bars_lstm:
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02,
-                f"{bar.get_height():.4f}", ha="center", va="bottom", fontsize=10)
-
-    for bar in bars_transf:
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.02,
-                f"{bar.get_height():.4f}", ha="center", va="bottom", fontsize=10)
-
-    ax.set_title("Порівняння метрик LSTM та Transformer (°C)", fontsize=13)
-    ax.set_ylabel("Похибка (°C)")
-    ax.set_xticks(x)
-    ax.set_xticklabels(metrics)
-    ax.legend()
-
-    plt.tight_layout()
-    plt.savefig("metrics_comparison.png", bbox_inches="tight")
-    plt.show()
-    print("Збережено: metrics_comparison.png")
-
-
-def plot_scatter(true_values, lstm_pred, transformer_pred):
-    """
-    Scatter plot: факт vs прогноз.
-    Ідеальна модель дає всі точки на діагональній лінії y=x.
-    Чим ближче точки до діагоналі - тим краща модель.
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-    fig.suptitle("Факт vs Прогноз", fontsize=13)
-
-    # Діапазон для діагональної лінії
-    min_val = min(true_values.min(), lstm_pred.min(), transformer_pred.min())
-    max_val = max(true_values.max(), lstm_pred.max(), transformer_pred.max())
-
-    for ax, pred, title, color in zip(
-        axes,
-        [lstm_pred, transformer_pred],
-        ["LSTM", "Transformer"],
-        ["#d7191c", "#1a9641"]
-    ):
-        ax.scatter(true_values, pred, alpha=0.2, s=8, color=color)
-        ax.plot([min_val, max_val], [min_val, max_val],
-                color="black", linewidth=1.2, linestyle="--", label="Ідеальний прогноз")
-        ax.set_title(title)
-        ax.set_xlabel("Факт (°C)")
-        ax.set_ylabel("Прогноз (°C)")
-        ax.legend()
-
-    plt.tight_layout()
-    plt.savefig("scatter.png", bbox_inches="tight")
-    plt.show()
-    print("Збережено: scatter.png")
-
-
-def generate_all_plots(true_values, lstm_pred, transformer_pred,
-                       lstm_metrics, transformer_metrics):
-    """
-    Генерує всі графіки одним викликом.
-    """
-    print("Генеруємо графіки...\n")
-
-    plot_predictions(true_values, lstm_pred, transformer_pred)
-    plot_predictions_combined(true_values, lstm_pred, transformer_pred)
-    plot_error_distribution(true_values, lstm_pred, transformer_pred)
-    plot_metrics_comparison(lstm_metrics, transformer_metrics)
-    plot_scatter(true_values, lstm_pred, transformer_pred)
-
-    print("\nВсі графіки збережені в папці проекту.")
+  plt.tight_layout()
+  plt.savefig(save_path, dpi=300)
+  plt.close()
